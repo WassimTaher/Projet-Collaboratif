@@ -1,0 +1,218 @@
+//----------GENERATION DU MAILLAGE---------
+
+// Nombre de fichiers
+int nbFiles = 6;  
+
+// Tableaux pour stocker les points de chaque fichier
+real[int][int] xPoints(nbFiles), yPoints(nbFiles);  
+
+// Lecture des points depuis les fichiers
+for (int i = 0; i < nbFiles; i++) {
+    string filename = "point" + (i+1) + ".txt";  // Nom du fichier
+    ifstream file(filename);  // Ouverture du fichier
+
+    // Vérifie si le fichier est ouvert correctement
+    if (!file.good()) {
+        cout << "Erreur : impossible d'ouvrir le fichier " << filename << endl;
+        exit(1);
+    }
+
+    real xPoint, yPoint;  // Variables locales pour lire les points
+    int nPoints;
+    file >> nPoints;  // Lecture du nombre de points dans le fichier
+
+    // Redimensionner les tableaux pour stocker les points du fichier courant
+    xPoints[i].resize(nPoints);
+    yPoints[i].resize(nPoints);
+
+    // Lecture des points
+    for (int j = 0; j < nPoints; j++) {
+        file >> xPoint >> yPoint;  // Lecture des coordonnées x et y
+        xPoints[i][j] = xPoint;  // Stockage de x
+        yPoints[i][j] = yPoint;  // Stockage de y
+    }
+}
+
+// Définition des bordures avec des labels distincts
+border b1(t=0, 1) {
+    int i = 0;  // Indice du fichier (premier fichier)
+    int j = int(t * (xPoints[i].n - 1));  // Interpolation linéaire entre les points
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 1;  // Label pour la première bordure  WALL1 en BAS
+}
+
+border b2(t=0, 1) {
+    int i = 1;  // Indice du fichier (deuxième fichier)
+    int j = int(t * (xPoints[i].n - 1));  
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 2;  // Label pour la deuxième bordure OUT
+}
+
+border b3(t=0, 1) {
+    int i = 2;  // Indice du fichier (troisième fichier)
+    int j = int(t * (xPoints[i].n - 1));  
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 1;  // Label pour la troisième bordure WALL 2 en HAUT
+}
+
+border b4(t=0, 1) {
+    int i = 3;  // Indice du fichier (quatrième fichier)
+    int j = int(t * (xPoints[i].n - 1));  
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 3;  // Label pour la quatrième bordure IN1 en HAUT
+}
+
+border b5(t=0, 1) {
+    int i = 4;  // Indice du fichier (cinquième fichier)
+    int j = int(t * (xPoints[i].n - 1));  
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 1;  // Label pour la cinquième bordure WALL 3 A GAUCHE
+}
+
+border b6(t=0, 1) {
+    int i = 5;  // Indice du fichier (sixième fichier)
+    int j = int(t * (xPoints[i].n - 1));  
+    x = xPoints[i][j];
+    y = yPoints[i][j];
+    label = 4;  // Label pour la sixième bordure IN 2 EN BAS
+}
+
+// Génération du maillage en combinant les bordures
+mesh Th = buildmesh(b1(500) + b2(5) + b3(500) + b4(5) + b5(30) + b6(5));
+
+// Adaptation du maillage (optionnel)
+Th = adaptmesh(Th, iso = 1, hmax = 0.03, nbvx = 100000);
+
+// Visualisation du maillage
+plot(Th, fill=1, value=1, wait=true);
+
+
+//-----------RESOLUTION------------
+
+real h = 0.05; // Taille des mailles
+real L = 1; // Longueur caractéristique
+int N1 = L / h;
+real d = 0.1; // Diamètre du tube
+int N2 = d / h;
+
+// La partie canaux inclinés (V) :
+real LIncline = L / sqrt(2);
+real dIncline = d / sqrt(2);
+
+// Rayons :
+real r = d / 2;
+real rIncline = dIncline / 2;
+int N3 = (LIncline + 2 * dIncline - r) / h;
+
+macro grad(w) [dx(w), dy(w)] //
+macro Grad(wx, wy) [grad(wx), grad(wy)] //
+macro div(wx, wy) (dx(wx) + dy(wy)) //
+
+// Donneés sur le bord
+// fonctions pour créer le poisseille (à modifier et à adapter)
+func uxBord =  1 - ( (x - rIncline)^2 / rIncline^2);
+func uyBord1 =  1 - ( (y - LIncline - rIncline)^2 / rIncline^2);
+func uyBord2 =  1 - ( (y + LIncline + rIncline)^2 / rIncline^2);
+
+func Cd = 0;
+
+// Déscritisation en temps :
+real Tf = 2;
+real dt = 0.01;
+int Niter = Tf / dt;
+
+// Paramètres d'adimensionnement
+real Xbar = 1e-6;
+real Ubar = 1e-3;
+real Etabar = 1.0005e-6;
+real Pbar = 1e4;
+real tbar = 1;
+real rho = 1e3; // masse volumique (pas sur de la valeur)
+real Re = 1e-3; // nombre de Reynlod (supposé <<< 1)
+real eps = 1e-3; // parametre de pénalisation de la moyenne
+real gamma = 1*10e-10;
+
+//On définit alpha et beta
+func real alpha(real teta){ 
+    return 1.363e-6 * exp(-0.0727 * teta) + 3.778e-7;
+    }
+
+func real beta(real teta){ 
+    return 0.2 * exp(0.03 * teta);
+    }
+
+real teta = 0; // beta(teta = 0) = 10^-1
+
+// -- P1/P0 
+fespace Xh(Th,P1);
+fespace Mh(Th,P0);
+
+Xh Uhx, Uhy, Vhx, Vhy, UxPrev, UyPrev;
+Mh p, q;
+
+real const1 = (Xbar * Pbar) / (Etabar * rho * Ubar);
+real const2 = Ubar / Xbar;
+//Problème Stokes
+problem StokesNonStationnaire ([Uhx, Uhy, p], [Vhx, Vhy, q]) = int2d(Th) (sqrt(Re) * (Uhx * Vhx + Uhy * Vhy)     
+                                                                        + dt * alpha(teta) * (Grad(Uhx, Uhy) : Grad(Vhx, Vhy))) 
+                                                            - int2d(Th) (dt * const1 * (p * div(Vhx, Vhy)))
+                                                            + int1d(Th,5) (dt * const1 * Vhx * p)
+                                                            + int2d(Th) (div(Uhx, Uhy) * q * dt * const2)
+                                                            - int2d(Th) (const1 * (UxPrev * Vhx + UyPrev * Vhy) )
+                                                            + int2d(Th)( eps * p * q ) // adaptation de la moyenne de la pression
+                                                            + on(1, Uhx = 0, Uhy = 0) 
+                                                            + on(4, Uhx = -uxBord, Uhy = uyBord2)
+                                                            + on(3, Uhx = -uxBord, Uhy = -uyBord1); // - car y descent 
+Xh C, Cbar, Cprev;
+
+Cprev = Cd;
+//Problème mélange
+problem PbMelange (C, Cbar) = int2d(Th) ( (Xbar^2 / tbar) * C * Cbar 
+                                        + dt * Ubar * Xbar * Cbar * (Uhx * dx(C) + Uhy * dy(C))
+                                        + dt * gamma * beta(teta) * (grad(C)' * grad(Cbar)) )
+                                        
+                            - int2d(Th) ( (Xbar^2 / tbar) * Cbar * Cprev) + on(3, C = 1) + on(4, C = 0);                                                            
+real t = 0; // temps initial
+int n = 0;
+int i = 0; // pour la suite des fonctions alpha et beta
+
+//Cette fonction renvoie le min entre a et b
+func real min(real a, real b) {
+    if(a < b){
+        return a;
+    }
+    else{
+        return b;
+    }
+}
+// Schéma implicite : 
+while(n < Niter){
+    
+    // mise à jours du temps
+    t += dt; 
+    teta = min(teta + 5, 100);
+    alpha(teta);
+    beta(teta);
+    // Résolution du Pb de Stokes instationnaire pour avoir la vitesse au temps n+1 
+    StokesNonStationnaire;
+    UxPrev = Uhx;
+    UyPrev = Uhy;
+    
+    // ensuite résolution du pb de mélange pour avoir la concentration au temps n+1
+    PbMelange;
+    Cprev = C;
+    
+    plot([UxPrev, UyPrev],fill=1,value=1,wait=1, cmm = "Vitesse etape " + t);
+    plot(p, fill=1,value=1,wait=1, cmm = "Pression etape " + t);
+    plot(Cprev,fill=1,value=1,wait=1, cmm = "Concentration etape " + t);
+    
+    ++n;
+}
+
+
+
